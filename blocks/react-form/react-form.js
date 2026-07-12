@@ -209,6 +209,8 @@ function ReactForm({ fields }) {
     console.log('react-form values', values);
   };
 
+  const hasErrors = Object.values(errors).some(Boolean);
+
   return React.createElement(
     'form',
     { className: 'react-form', onSubmit: handleSubmit },
@@ -221,7 +223,7 @@ function ReactForm({ fields }) {
         errors[field.name] ? React.createElement('span', { className: 'react-form-error' }, errors[field.name]) : null
       )
     ),
-    React.createElement('button', { type: 'submit' }, 'Submit')
+    React.createElement('button', { type: 'submit', disabled: hasErrors }, 'Submit')
   );
 }
 

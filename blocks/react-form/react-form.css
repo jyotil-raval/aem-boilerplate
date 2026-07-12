@@ -56,3 +56,8 @@
   color: #fff;
   cursor: pointer;
 }
+
+.react-form button[type='submit']:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
