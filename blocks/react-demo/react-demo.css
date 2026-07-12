@@ -1,0 +1,21 @@
+.react-demo-root {
+  padding: 1rem;
+  border: 1px solid var(--dark-color, #ccc);
+  border-radius: 8px;
+  max-width: 320px;
+  font-family: var(--body-font-family, sans-serif);
+}
+
+.react-demo-counter p {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.react-demo-counter button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--link-color, #1473e6);
+  color: #fff;
+  cursor: pointer;
+}
