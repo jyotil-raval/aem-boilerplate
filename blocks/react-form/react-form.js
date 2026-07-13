@@ -1,67 +1,74 @@
 // @ts-check
-// CDN ESM imports below aren't filesystem-resolvable — airbnb-base's
-// extension/resolution rules don't apply to them.
 // eslint-disable-next-line import/no-unresolved, import/extensions
 import React, { useState } from 'https://esm.sh/react@18.3.1';
 // eslint-disable-next-line import/no-unresolved, import/extensions
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
+import registry from './fields/registry.js';
 
 /**
  * @typedef {{
  *   label: string,
  *   name: string,
- *   kind: 'text'|'number'|'radio'|'checkbox'|'email',
- *   maxLength?: number,
- *   options?: string[]
+ *   kind: string,
+ *   showIf?: { field: string, equals: string },
+ *   [key: string]: *
  * }} FieldSpec
  */
 
 /**
- * Explicit type declaration, read from the constraint cell. The FIRST
- * token (before any comma, and outside any list) is the control type —
- * "text", "number", "radio", or "checkbox". This is the contract: authors
- * declare what a field IS, the code doesn't guess from shape.
- *
- * - text: optional second token is maxLength     -> "text, 50"
- * - email: same shape as text, format-validated  -> "email, 40"
- * - number: no params                            -> "number"
- * - radio / checkbox: options come from a <ul>/<ol> below the keyword
- *     -> "radio" + a bulleted list of options in the same cell
- *
- * "string" is kept as an alias for "text" for backward compatibility with
- * earlier-authored tables that used it before this convention existed.
+ * Reads a constraint cell as key:value lines — one line per fact about
+ * the field ("type: text", "maxLength: 50", "showIf: some-field = Yes").
+ * Each direct child of the cell (typically a <p> per line an author
+ * pressed Enter to create) is treated as one line — NOT cell.textContent
+ * split on '\n', which silently loses the line breaks between separate
+ * <p> elements and would run every line together.
  * @param {HTMLElement} cell
- * @returns {{ kind: FieldSpec['kind'], maxLength?: number, options?: string[] }}
  */
-function parseConstraint(cell) {
+function parseKeyValueLines(cell) {
   const list = cell.querySelector('ul, ol');
   const options = list ? [...list.querySelectorAll('li')].map((li) => li.textContent.trim()).filter(Boolean) : undefined;
 
-  // Read the keyword/params from the cell's text with the list stripped
-  // out, so list item text never leaks into the type token.
-  const clone = /** @type {HTMLElement} */ (cell.cloneNode(true));
-  clone.querySelectorAll('ul, ol').forEach((el) => el.remove());
-  const tokens = clone.textContent
-    .split(',')
-    .map((token) => token.trim())
-    .filter(Boolean);
-  const [rawType, param] = tokens;
-  const type = (rawType || '').toLowerCase();
+  const pairs = {};
+  [...cell.childNodes]
+    .filter((node) => node.nodeName !== 'UL' && node.nodeName !== 'OL')
+    .forEach((node) => {
+      const text = node.textContent.trim();
+      const separatorIndex = text.indexOf(':');
+      if (!text || separatorIndex === -1) return;
+      const key = text.slice(0, separatorIndex).trim().toLowerCase();
+      const value = text.slice(separatorIndex + 1).trim();
+      pairs[key] = value;
+    });
 
-  switch (type) {
-    case 'number':
-      return { kind: 'number' };
-    case 'radio':
-      return { kind: 'radio', options: options || [] };
-    case 'checkbox':
-      return { kind: 'checkbox', options: options || [] };
-    case 'email':
-      return { kind: 'email', maxLength: param ? Number(param) : undefined };
-    case 'text':
-    case 'string':
-    default:
-      return { kind: 'text', maxLength: param ? Number(param) : undefined };
-  }
+  return { pairs, options };
+}
+
+/**
+ * "some-field = Yes" -> { field: 'some-field', equals: 'Yes' }. The
+ * field name referenced is the same slug parseFields already derives
+ * from a label, so this reads existing names rather than inventing a
+ * new naming system.
+ * @param {string | undefined} raw
+ */
+function parseShowIf(raw) {
+  if (!raw) return undefined;
+  const [field, equals] = raw.split('=').map((part) => part.trim());
+  return field && equals ? { field, equals } : undefined;
+}
+
+/**
+ * @param {HTMLElement} cell
+ */
+function parseConstraint(cell) {
+  const { pairs, options } = parseKeyValueLines(cell);
+  const type = (pairs.type || '').toLowerCase();
+  const registered = registry[type] || registry.text;
+
+  return {
+    kind: registered.kind,
+    showIf: parseShowIf(pairs.showif),
+    ...registered.parse(pairs, options)
+  };
 }
 
 /**
@@ -81,99 +88,11 @@ function parseFields(block) {
 }
 
 /**
- * @param {string[]} selected
- * @param {string} option
- * @returns {string[]}
- */
-function toggleOption(selected, option) {
-  return selected.includes(option) ? selected.filter((existing) => existing !== option) : [...selected, option];
-}
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/**
- * Dispatches on field.kind to check a value against that kind's rule.
- * Returns an error message string, or undefined if valid. Only 'email'
- * has a rule so far — everything else passes until a later phase adds
- * more (required, phone format, etc.), same extension point as
- * renderControl below.
  * @param {FieldSpec} field
- * @param {*} value
- * @returns {string | undefined}
+ * @param {Record<string, *>} values
  */
-function validateField(field, value) {
-  if (field.kind === 'email') {
-    // Not enforcing "required" here — empty stays valid for now. Only
-    // check format once something's actually been typed.
-    if (!value) return undefined;
-    return EMAIL_PATTERN.test(value) ? undefined : 'Enter a valid email address';
-  }
-  return undefined;
-}
-
-/**
- * Dispatches on field.kind to render the right control. Kept separate
- * from ReactForm so adding a new kind later is a new case here, not a
- * deeper ternary.
- * @param {FieldSpec} field
- * @param {*} value
- * @param {(name: string, value: *) => void} onChange
- * @param {(name: string) => void} onBlur
- */
-function renderControl(field, value, onChange, onBlur) {
-  if (field.kind === 'radio') {
-    return React.createElement(
-      'div',
-      { className: 'react-form-radio-group' },
-      ...(field.options || []).map((option) =>
-        React.createElement(
-          'label',
-          { key: option, className: 'react-form-option' },
-          React.createElement('input', {
-            type: 'radio',
-            name: field.name,
-            value: option,
-            checked: value === option,
-            onChange: () => onChange(field.name, option)
-          }),
-          option
-        )
-      )
-    );
-  }
-
-  if (field.kind === 'checkbox') {
-    const selected = Array.isArray(value) ? value : [];
-    return React.createElement(
-      'div',
-      { className: 'react-form-checkbox-group' },
-      ...(field.options || []).map((option) =>
-        React.createElement(
-          'label',
-          { key: option, className: 'react-form-option' },
-          React.createElement('input', {
-            type: 'checkbox',
-            name: field.name,
-            value: option,
-            checked: selected.includes(option),
-            onChange: () => onChange(field.name, toggleOption(selected, option))
-          }),
-          option
-        )
-      )
-    );
-  }
-
-  // text / number / email share the same plain-input shape.
-  return React.createElement('input', {
-    id: field.name,
-    name: field.name,
-    type: field.kind,
-    maxLength: field.maxLength,
-    value: value || '',
-    onChange: (event) => onChange(field.name, event.target.value),
-    onBlur: () => onBlur(field.name)
-  });
+function isVisible(field, values) {
+  return !field.showIf || values[field.showIf.field] === field.showIf.equals;
 }
 
 /**
@@ -183,30 +102,46 @@ function ReactForm({ fields }) {
   const [values, setValues] = useState({});
   const [errors, setErrors] = useState({});
 
+  const visibleFields = fields.filter((field) => isVisible(field, values));
+
   const handleChange = (name, value) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   };
 
+  const validateOne = (field) => {
+    const { validate } = registry[field.kind] || {};
+    return validate ? validate(field, values[field.name]) : undefined;
+  };
+
   const handleBlur = (name) => {
     const field = fields.find((candidate) => candidate.name === name);
-    const error = validateField(field, values[name]);
-    setErrors((prev) => ({ ...prev, [name]: error }));
+    setErrors((prev) => ({ ...prev, [name]: validateOne(field) }));
   };
 
   const handleSubmit = (event) => {
     event.preventDefault();
 
+    // Hidden fields never get validated — an unmet showIf rule on a
+    // field the user can't even see must never block submission.
     const nextErrors = {};
-    fields.forEach((field) => {
-      const error = validateField(field, values[field.name]);
+    visibleFields.forEach((field) => {
+      const error = validateOne(field);
       if (error) nextErrors[field.name] = error;
     });
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) return;
 
+    // Stale answers from fields that are currently hidden (e.g. the
+    // branch not taken) are left out of what actually gets submitted,
+    // rather than clearing state on every visibility change.
+    const visibleValues = {};
+    visibleFields.forEach((field) => {
+      visibleValues[field.name] = values[field.name];
+    });
+
     // eslint-disable-next-line no-console
-    console.log('react-form values', values);
+    console.log('react-form values', visibleValues);
   };
 
   const hasErrors = Object.values(errors).some(Boolean);
@@ -214,12 +149,12 @@ function ReactForm({ fields }) {
   return React.createElement(
     'form',
     { className: 'react-form', onSubmit: handleSubmit },
-    ...fields.map((field) =>
+    ...visibleFields.map((field) =>
       React.createElement(
         'div',
         { className: 'react-form-field', key: field.name },
         React.createElement('label', { htmlFor: field.name }, field.label),
-        renderControl(field, values[field.name], handleChange, handleBlur),
+        registry[field.kind].render(field, values[field.name], handleChange, handleBlur),
         errors[field.name] ? React.createElement('span', { className: 'react-form-error' }, errors[field.name]) : null
       )
     ),

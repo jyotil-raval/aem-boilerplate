@@ -20,11 +20,29 @@
 
 .react-form-field input[type='text'],
 .react-form-field input[type='number'],
-.react-form-field input[type='email'] {
+.react-form-field input[type='email'],
+.react-form-field textarea {
   padding: 0.5rem;
   border: 1px solid var(--dark-color, #ccc);
   border-radius: 4px;
   font-size: 1rem;
+  font-family: inherit;
+}
+
+.react-form-field textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.react-form-file-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.react-form-file-names {
+  font-size: 0.85rem;
+  color: var(--dark-color, #666);
 }
 
 .react-form-error {
