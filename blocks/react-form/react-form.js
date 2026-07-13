@@ -82,7 +82,10 @@ function parseFields(block) {
   return [...block.children].map((row) => {
     const [labelCell, constraintCell] = row.children;
     const label = labelCell.textContent.trim();
-    const name = label.toLowerCase().replace(/\s+/g, '-');
+    const name = label
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
     return { label, name, ...parseConstraint(constraintCell) };
   });
 }
